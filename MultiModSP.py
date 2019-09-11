@@ -13,7 +13,7 @@ Contact: kumar372@umn.edu
 
 import math, time, heapq
 
-inputDataLocation = "Z:/Projects/NSF_SCC\Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/"
+inputDataLocation = "S:/Projects/NSF_SCC\Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/"
 
 ################################################################################################
 class Node:
@@ -28,8 +28,6 @@ class Node:
         self.name = ""
 
 
-
-
 class Link:
     def __init__(self, _tmpIn):
         self.fromNode = _tmpIn[0]
@@ -37,7 +35,11 @@ class Link:
         self.dist = float(_tmpIn[2]) # in miles
         self.time = float(_tmpIn[3]) # in minutes
         self.type = _tmpIn[4]
+        self.wait = 0
+        self.fuelCost = 0
         self.passengers = []
+        self.active = 1
+        self.lineId = ""
 
 class Line:
     def __init__(self, _tmpIn):
@@ -45,7 +47,7 @@ class Line:
         self.lineName = _tmpIn[1]
         self.trips = [] # Associated trips
         self.stops = []
-        self.headway = 10
+        self.freq = 10 # Buses per hour
 
 class Passenger:
     def __init__(self, _tmpIn):
@@ -165,7 +167,7 @@ def readLinks():
             nodeSet[tmpIn[1]].inLinks.append(tmpIn[0])
 
     inFile.close()
-    '''
+
     # Reading transit transfer links
     inFile = open(inputDataLocation+"ft_input_transfers.dat")
     tmpIn = inFile.readline().strip().split("\t")
@@ -182,8 +184,26 @@ def readLinks():
             nodeSet[tailNode].outLinks.append(headNode)
             nodeSet[headNode].inLinks.append(tailNode)
     inFile.close()
-    '''
 
+
+def readLines():
+    # Reading transit stops
+    inFile = open(inputDataLocation + "ft_input_routes.dat")
+    tmpIn = inFile.readline().strip().split("\t")
+    for x in inFile:
+        tmpIn = x.strip().split("\t")
+        lineSet[tmpIn[0]] = Line([tmpIn[0], tmpIn[2]])
+    inFile.close()
+
+def readtrips():
+    # Reading transit stops
+    inFile = open(inputDataLocation + "ft_input_trips.dat")
+    tmpIn = inFile.readline().strip().split("\t")
+    for x in inFile:
+        tmpIn = x.strip().split("\t")
+        lineSet[tmpIn[1]].trips.append(tmpIn[0])
+        lineSet[tmpIn[1]].stops.append(tmpIn[7])
+    inFile.close()
 
 
 
@@ -204,7 +224,14 @@ def readTransitLinks():
             linkId = (prevNodeId, nodeId)
             dist = haversine(nodeSet[prevNodeId].long, nodeSet[prevNodeId].lat, nodeSet[nodeId].long, nodeSet[nodeId].lat)
             time = float(tmpIn[1])
+            #print([lineSet[k].lineId for k in lineSet if lineSet[k].lineName == tripId])
+            Id = [lineSet[k].lineId for k in lineSet if tripId in lineSet[k].trips]
+            if len(Id) == 1:
+                Id = Id[0]
+            else:
+                print("Multiple tripsIds are in the given route")
             linkSet[linkId] = Link([prevNodeId, nodeId, dist, (time - prevNodeTime), tripId])
+            linkSet[linkId].lineId = Id
             nodeSet[prevNodeId].outLinks.append(nodeId)
             nodeSet[nodeId].inLinks.append(prevNodeId)
             prevNodeId = nodeId # Changing the previous node to current node (This will take care of the stop seq = 1 also)
@@ -220,23 +247,10 @@ def creatingUniqueSet():
         nodeSet[i].inLinks = list(set(nodeSet[i].inLinks))
         nodeSet[i].outLinks = list(set(nodeSet[i].outLinks))
 
-def readLines():
-    # Reading transit stops
-    inFile = open(inputDataLocation + "ft_input_routes.dat")
-    tmpIn = inFile.readline().strip().split("\t")
-    for x in inFile:
-        tmpIn = x.strip().split("\t")
-        lineSet[tmpIn[0]] = Line([tmpIn[0], tmpIn[2]])
-    inFile.close()
+    for j in lineSet:
+        lineSet[j].stops = list(set(lineSet[j].stops))
+        lineSet[j].trips = list(set(lineSet[j].trips))
 
-def readtrips():
-    # Reading transit stops
-    inFile = open(inputDataLocation + "ft_input_trips.dat")
-    tmpIn = inFile.readline().strip().split("\t")
-    for x in inFile:
-        tmpIn = x.strip().split("\t")
-        lineSet[tmpIn[1]].trips.append(tmpIn[0])
-    inFile.close()
 
 
 def readDemand():
@@ -254,10 +268,32 @@ def readDemand():
 
 
 
+
+
 ################################################################################################
-# Writing a shortest path code
+
+def calcWaitFuelTime():
+    '''
+    Calculate the wait time of the links if they are access,
+    transfer, or mode transfer links
+
+    Calcualte the fuel cost for road links
+    '''
+
+    for l in linkSet:
+        if linkSet[l].type in ['access', 'modeTransAccess', 'transitTransfer']:
+            lineFreq = [lineSet[k].freq for k in lineSet if l[1][0] in lineSet[k].stops]
+            linkSet[l].wait = 60.0/(sum(lineFreq))
+        if linkSet[l].type == "road":
+            linkSet[l].fuelCost = linkSet[l].dist * alpha[0] * fuelCost / 60
+
+
+
 
 def shortestPath(origin):
+    '''
+    Calculate the shoetest path from a node to all other nodes
+    '''
     label = {}
     pred ={}
     for n in nodeSet:
@@ -271,9 +307,7 @@ def shortestPath(origin):
         #i = min(SE, key=label.get)
         #SE.remove(i)
         for j in nodeSet[i].outLinks:
-            tmpCost = linkSet[i, j].time
-            if linkSet[i, j].type == 'access' or linkSet[i, j].type == 'modeTransAccess':
-                tmpCost = tmpCost
+            tmpCost = linkSet[i, j].time + linkSet[i, j].wait
             if linkSet[i, j].type == 'road':
                 tmpCost = linkSet[i, j].dist*alpha[0]*fuelCost/60
             if nodeSet[j].label > nodeSet[i].label + tmpCost:
@@ -288,8 +322,13 @@ def assignPassengers():
     for p in passengerSet:
         start = time.time()
         shortestPath(passengerSet[p].origin)
+        dest = passengerSet[p].dest
+        path=[dest]
+        while nodeSet[dest].pred != "NA":
+            path.append(linkSet[dest, nodeSet[dest].pred].type)
+            dest = nodeSet[dest].pred
+        print("Path of the passenger is ", path)
         print("One shortest path took ", time.time() - start, " seconds")
-
         print(nodeSet[passengerSet[p].dest].label)
 
 
@@ -312,8 +351,9 @@ readTransitLinks()
 creatingUniqueSet()
 readDemand()
 print("Creating the network and reading the demand took ", time.time() - start, " seconds")
+calcWaitFuelTime()
 start = time.time()
-assignPassengers()
+#assignPassengers()
 print("assigning Passengers on shortest path is ", time.time() - start, " seconds")
 
 

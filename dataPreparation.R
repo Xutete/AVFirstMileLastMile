@@ -52,7 +52,6 @@ extrTrips <- c()
 for (i in uniqueRoutes){
   p <- trips[trips$route_id == i, ]
   ind <- which.max(p$numStops)
-  print(c(i, ind))
   extrTrips <- c(extrTrips, p[ind, ]$trip_id)
 }
 
@@ -73,11 +72,11 @@ write.table(stops, paste0(location, "ft_input_stops.dat"), sep = "\t", row.names
 
 
 # Writing the ft_input_trips.dat
-trips <- p[p$stop_sequence == 1, ]
-trips <- trips[c("trip_id", "route_id", "route_type", "departure_time", "direction_id")]
+#trips <- p[p$stop_sequence == 1, ]
+trips <- p[c("trip_id", "route_id", "route_type", "departure_time", "direction_id", "stop_id")]
 trips$capacity <- ""
 trips$shapeId <- ""
-trips<- trips[, c("trip_id", "route_id", "route_type", "departure_time", "capacity", "shapeId", "direction_id")]
+trips<- trips[, c("trip_id", "route_id", "route_type", "departure_time", "capacity", "shapeId", "direction_id", "stop_id")]
 write.table(trips, paste0(location, "ft_input_trips.dat"), sep = "\t", row.names = FALSE, quote = FALSE)
 
 
