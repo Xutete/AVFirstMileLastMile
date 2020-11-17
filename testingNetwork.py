@@ -11,6 +11,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
+#import numpy as np
 
 ################################################################################################+
 
@@ -374,6 +375,7 @@ def plotNetwork():
     #plt.colorbar(ed, ax=ax)
     #ed.set_clim(vmin=0, vmax=10)
     
+    
     ax.legend(scatterpoints=1, loc='upper center', bbox_to_anchor=(0.5, 0.35, 0.5, 0.5), fontsize =  'xx-large')
     plt.show()
     
@@ -383,7 +385,7 @@ def analyzeTimeDistr():
     '''
         Analyzing travel time of different types of links so that the results are not biased
     '''
-    import numpy as np
+    #import numpy as np
     import matplotlib.pyplot as plt
     import random
     types = list({linkSet[l].type for l in linkSet})
@@ -397,7 +399,8 @@ def analyzeTimeDistr():
     plt.legend(loc="upper right")
     plt.show()
 ################################################################################################
-def transitAssignment():
+
+def transitAssignment(route='1341', freq = 0.0, verbose = 0):
     '''
     This solves the transit assignment problem
     :return:
@@ -405,7 +408,7 @@ def transitAssignment():
     
     m = Model()
     v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
-    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb =  -GRB.INFINITY  , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
     Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
 
     m.update()
@@ -424,12 +427,70 @@ def transitAssignment():
         for i in stops:
             for l in nodeSet[i].outLinks:
                 if linkSet[l].type == 'boarding':
-                    m.addConstr(v[l, k] <= (12/60.0)*Wt[i, k])
-
+                    line = l[1][1]     
+                    if line == route:
+                        rWaitConstr[i, l, k] = m.addConstr(v[l, k] <= (freq/60.0)*Wt[i, k])
+                    else:
+                        rWaitConstr[i, l, k] = m.addConstr(v[l, k] <= (2.0/60.0)*Wt[i, k])
         for i in zoneSet: 
             for a in nodeSet[i].outLinks:
                 if linkSet[a].type == 'road':
-                    m.addConstr(v[a, k] <= A * 50*Wr[i, k])
+                    tWaitConstr[a, i, k] = m.addConstr(v[a, k] <= A * 100.0*Wr[i, k])
+
+    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
+    twt = sum([Wt[k] for k in Wt])
+    rwt = sum([Wr[k] for k in Wr])
+    obj = ivt +rwt + twt 
+    m.setObjective(obj, sense=GRB.MINIMIZE)
+    m.update()
+    m.Params.OutputFlag = verbose
+    m.Params.DualReductions = 0
+    m.optimize()
+    if verbose == 1:        
+        print("Solving model took ", time.time() - start, " sec", m.status)
+        print(m.objVal)
+        print(ivt.getValue())
+        print(twt.getValue())
+        print(rwt.getValue())
+
+    return m.objVal
+
+
+def bigMCalc(yl, Nl, verbose = 0):
+    '''
+    This solves the transit assignment problem
+    :return:
+    '''
+    
+    Wtbar = {}; Wrbar = {}
+    
+    m = Model()
+    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb =  0.0  , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+
+    m.update()
+    consConstr ={};rWaitConstr = {};tWaitConstr ={}
+    for k in zoneSet:
+        for i in nodeSet:
+            tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
+            if i == k:
+                dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                consConstr[i, k] = m.addConstr(tmp == -dem)
+            elif (i, k) in tripSet:
+                consConstr[i, k] = m.addConstr(tmp == tripSet[i, k].demand)
+            else:
+                consConstr[i, k] = m.addConstr(tmp == 0)
+
+        for i in stops:
+            for l in nodeSet[i].outLinks:
+                if linkSet[l].type == 'boarding':
+                    line = l[1][1]  
+                    tWaitConstr[i, l, k] = m.addConstr(v[l, k] <= sum([(f/60.0) * yl[line, f] for f in freqSet])*Wt[i, k])
+        for i in zoneSet: 
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'road':
+                    rWaitConstr[a, i, k] = m.addConstr(v[a, k] <= A * sum([n * Nl[i, n] for n in fleetSet])*Wr[i, k])
 
     ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
     twt = sum([Wt[k] for k in Wt])
@@ -440,12 +501,115 @@ def transitAssignment():
     m.Params.OutputFlag = 0
     m.Params.DualReductions = 0
     m.optimize()
-    print("Solving model took ", time.time() - start, " sec", m.status)
-    print(m.objVal)
-    print(ivt.getValue())
-    print(twt.getValue())
-    print(rwt.getValue())
+    if verbose == 1:        
+        print("Solving model took ", time.time() - start, " sec", m.status)
+        print(m.objVal)
+        print(ivt.getValue())
+        print(twt.getValue())
+        print(rwt.getValue())
+        
+    for k in zoneSet:
+        for i in stops:
+            for l in nodeSet[i].outLinks:
+                if linkSet[l].type == 'boarding':
+                    Wtbar[i, k] =Wt[i, k].x
+        for i in zoneSet: 
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'road':
+                    Wrbar[i, k] = Wr[i, k].x
+                        
+    return m.objVal, Wtbar, Wrbar
+
+
+
+def bilinearGurobi():
+    m = Model()
+    x = {l: m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name=str(l)) for l in lineSet}
+    y = {(l, f): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([l, str(f)])) for f in freqSet for l in lineSet}
+    N = {(i, n): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([i, str(n)])) for i in zoneSet for n in fleetSet}
     
+
+    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = 0 , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = 0 , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+    m.update()    
+  
+    
+    tempVeh = 0
+    for l in lineSet:
+        tempTime = sum([linkSet[a].time for a in lineSet[l].links])
+        tempVeh +=  tempTime * (sum([(f/60.0) * y[l, f] for f in freqSet]))
+        m.addConstr(sum([y[l, f] for f in freqSet]) == x[l])
+    m.addConstr(tempVeh <= maxBusFleet)
+    
+    tempVeh = 0
+    for i in zoneSet:
+        tempVeh += sum([n * N[i, n] for n in fleetSet])
+        m.addConstr(sum([N[i, n] for n in fleetSet]) == 1)
+    m.addConstr(tempVeh <= maxAVfleet)
+       
+    for k in zoneSet:
+        dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+        for i in nodeSet:
+            tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
+            if i == k:
+                dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                m.addConstr(tmp == -dem)
+            elif (i, k) in tripSet:
+                m.addConstr(tmp == tripSet[i, k].demand)
+            else:
+                m.addConstr(tmp == 0)
+
+        for i in stops:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'boarding':
+                    l = a[1][1]  
+                    m.addConstr(v[a, k] <=   sum([(f/60.0) * y[l, f] for f in freqSet])*Wt[i, k])
+
+                        
+                
+        for i in zoneSet: 
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'road':                        
+                    m.addConstr(v[a, k] <= A * sum([n * N[i, n] for n in fleetSet])*Wr[i, k])
+                    
+                    
+    m.update()
+    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
+    twt = sum([Wt[k] for k in Wt])
+    rwt = sum([Wr[k] for k in Wr])
+    obj = ivt + rwt + twt
+    m.setObjective(obj, sense=GRB.MINIMIZE)
+
+                        
+    m.update()
+    m.Params.OutputFlag = 1
+    m.Params.DualReductions  = 0
+    m.Params.InfUnbdInfo = 1
+    m.params.NonConvex = 2
+    start = time.time()
+    m.optimize()
+    if m.status == 2:            
+        print("Solving model took ", time.time() - start, " sec")
+        print(m.status)
+        print(m.objVal)
+        print(ivt.getValue())
+        print(twt.getValue())
+        print(rwt.getValue())
+        print([k for k in x if x[k].x != 0])
+        
+        #roadShare =  sum([v[l].x for l in v if linkSet[l[0]].type == 'road'])
+        #transitShare = sum([linkFlow[l].x for l in linkFlow if linkSet[l[0]].type == 'access'])
+        #multiModShare = sum([linkFlow[l].x for l in linkFlow if linkSet[l[0]].type == 'modeTransAccess'])
+            
+    else:
+        print("Extreme ray encountered!", m.status)
+        m.computeIIS()
+        m.write("Infeasible_model.ilp")
+    return m
+        
+        
+        
 
 def solveGurobiModel():
     m = Model()
@@ -501,9 +665,11 @@ def solveGurobiModel():
         for i in stops:
             for a in nodeSet[i].outLinks:
                 if linkSet[a].type == 'boarding':
-                    l = a[1][1]
+                    l = a[1][1]            
+                        
                     m.addConstr(v[a, k] <=   sum([(f/60.0) * t[f, a, i, k] for f in freqSet]))
                     for f in freqSet:
+                        
                         m.addConstr(Wt[i, k] - t[f, a, i, k] <= BigM*(1-y[l, f]), name = 'c_' + str(f)+ str(a)+str(i) + str(k))
                         m.addConstr(t[f, a, i, k] <= BigM*y[l, f], name = 'm_' + str(f)+ str(a)+str(i) + str(k))
                         m.addConstr(Wt[i, k] >= t[f, a, i, k])
@@ -513,10 +679,9 @@ def solveGurobiModel():
                 
         for i in zoneSet: 
             for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'road':
+                if linkSet[a].type == 'road':                        
                     m.addConstr(v[a, k] <= A * sum([n * omega[n, a, i, k] for n in fleetSet]))
                     for n in fleetSet:
-                        bigM = dem * (1/ (A ))
                         m.addConstr(Wr[i, k] - omega[n, a, i, k] <= BigM*(1 - N[i, n]))
                         m.addConstr(omega[n, a, i, k] <= BigM*N[i, n])
                         m.addConstr(Wr[i, k] >= omega[n, a, i, k])
@@ -528,26 +693,13 @@ def solveGurobiModel():
     rwt = sum([Wr[k] for k in Wr])
     obj = ivt + rwt + twt
     m.setObjective(obj, sense=GRB.MINIMIZE)
-    '''
-    for k in zoneSet:
-        for i in stops:
-            for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'boarding':
-                    l = a[1][1]
-                    for f in freqSet:
-                        m.setObjective(t[f, a, i, k], sense=GRB.MAXIMIZE)
-                        m.Params.OutputFlag = 0
-                        m.update()
-                        m.optimize()
-                        if m.status == 2:                            
-                            print(m.objVal)
-                        else:
-                            print('Not possible', m.status)
-    '''
+
                         
     m.update()
     m.Params.OutputFlag = 1
     m.Params.DualReductions  = 0
+    m.Params.InfUnbdInfo = 1
+    m.Params.LazyConstraints = 1
     start = time.time()
     m.optimize()
     if m.status == 2:            
@@ -568,7 +720,7 @@ def solveGurobiModel():
         m.computeIIS()
         m.write("Infeasible_model.ilp")
         
-def setupMasterProblemModel(type = 'classic', verbose = 0):
+def setupMasterProblemModel(types = ['classic'], verbose = 0):
     '''
         Sets up the gurobi model
         type = can be classic or multiple 
@@ -594,40 +746,63 @@ def setupMasterProblemModel(type = 'classic', verbose = 0):
         m.addConstr(sum([N[i, n] for n in fleetSet]) == 1)
     m.addConstr(tempVeh <= maxAVfleet)
     
-
+    
+    if 'clique' in types:    
+        for f in freqSet:
+            tempDict = {k[0]:busesRequired[k] for k in busesRequired if k[1] == f}
+            tempDict = {k: v for k, v in sorted(tempDict.items(), key=lambda item: item[1])}
+            ind = 0; tot = 0
+            for g in tempDict:
+                tot += tempDict[g]            
+                if tot > maxBusFleet:
+                    m.addConstr(sum([y[l, f] for l in lineSet]) <= ind)
+                    break
+                ind += 1   
         
-    m.setObjective(sum([eta[k] for k in eta]), sense=GRB.MINIMIZE)
+        for n in fleetSet:
+            tempAv = round(maxAVfleet/n)
+            if tempAv < len(zoneSet):
+                m.addConstr(sum([N[i, n] for i in zoneSet]) <= tempAv)
+      
+    m.setObjective(sum([eta[k] for k in eta]), sense=GRB.MINIMIZE) # + sum([x[k]*yl[k] for k in yl]), sense=GRB.MINIMIZE)
     m.update()
-    m.Params.OutputFlag = verbose   
-    if type == 'multiple':        
-        m.Params.lazyConstraints = 1
+    m.Params.LazyConstraints = 1
+    m.Params.DualReductions  = 0
+    m.Params.OutputFlag = 0
+    if 'multiple' in types:       
+        m.Params.LazyConstraints = 1
         # Limit how many solutions to collect
         m.setParam(GRB.Param.PoolSolutions, 2)
         # Limit the search space by setting a gap for the worst possible solution
         # that will be accepted
-        m.setParam(GRB.Param.PoolGap, 0.20)
+        m.setParam(GRB.Param.PoolGap, 0.1)
         # do a systematic search for the k-best solutions
-        m.setParam(GRB.Param.PoolSearchMode, 1)       
+        m.setParam(GRB.Param.PoolSearchMode, 2)       
         #m.Params.lazyConstraints = 1
     m.update()
     return(m)
 
 
+
                 
-def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
+def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
     '''
         Solves the Benders subproblems and applies cuts based on the type of the algorithm
         verbose = 0: no verbose, 1: print status and objective values, 2: print the iterations of Gurobi
         type = can be classic, aggregated, multiple cuts, 
 
         
-    '''
-    
+    '''                  
+
+    ob, Wtbar, Wrbar = bigMCalc(y, N, verbose = 0)    
+
+    start = time.time()
     m1 = Model()
     v = {(a, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
     Wt = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
     Wr = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
     t = {}; omega ={}
+    
     for k in zoneSet:
         for i in stops:
             for a in nodeSet[i].outLinks:
@@ -644,7 +819,6 @@ def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
     consConstr = {}; constr1 = {}; constr2 = {}; constr3 = {}; constr4 = {}; constr5 = {}; constr6 = {}; constr7 = {}; constr8 = {}                 
     for k in zoneSet:
         dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
-
         for i in nodeSet:
             tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
             if i == k:
@@ -656,17 +830,20 @@ def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
                 consConstr[i, k] = m1.addConstr(tmp == 0)
         
         for i in stops:
-            for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'boarding':
+            for a in nodeSet[i].outLinks:                
+                if linkSet[a].type == 'boarding':                         
                     l = a[1][1]
-                    
-                    constr1[a, i, k] = m1.addConstr(v[a, k] <=   sum([round(f/60.0, 2) * t[f, a, i, k] for f in freqSet]))
+                    '''
+                    if len([b for b in freqSet if y[l, b] > 0.4]) > 0:
+                        fa = [b for b in freqSet if y[l, b] > 0.4][0]  
+                    else:
+                        fa = float("inf")  
+                    '''                                           
+                    constr1[a, i, k] = m1.addConstr(v[a, k] <=   sum([(f/60.0) * t[f, a, i, k] for f in freqSet]))                    
                     for f in freqSet:
-                        bigM = round(dem*60.0/f, 2)
-                        '''
-                        if dem*60/f > BigM:
-                            print(True, dem*60/f, f)
-                        '''
+                        dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                        #bigM = round(dem*60.0/fa, 2)
+                        bigM = Wtbar[i, k]
                         constr2[f, a, i, k] = m1.addConstr(Wt[i, k] - t[f, a, i, k] <= bigM*(1-y[l, f]))
                         constr3[f, a, i, k] = m1.addConstr(t[f, a, i, k] <= bigM*y[l, f])
                         constr4[f, a, i, k] = m1.addConstr(Wt[i, k] >= t[f, a, i, k])
@@ -674,9 +851,17 @@ def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
         for i in zoneSet: 
             for a in nodeSet[i].outLinks:
                 if linkSet[a].type == 'road':
+                    '''
+                    try:
+                        na = [b for b in fleetSet if N[i, b] > 0.4][0]
+                    except IndexError:
+                        print([(i, b, N[i, b])  for b in fleetSet])
+                    '''
                     constr5[i, a, k] = m1.addConstr(v[a, k] <= A * sum([n * omega[n, a, i, k] for n in fleetSet]))
                     for n in fleetSet:
-                        bigM = dem * (1/ (A ))
+                        dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                        #bigM = dem * (1.0/ (na  * A*1.0))
+                        bigM = Wrbar[i, k]
                         constr6[n, a, i, k] = m1.addConstr(Wr[i, k] - omega[n, a, i, k] <= bigM*(1 - N[i, n]))
                         constr7[n, a, i, k] = m1.addConstr(omega[n, a, i, k] <= bigM*N[i, n])
                         constr8[n, a, i, k] = m1.addConstr(Wr[i, k] >= omega[n, a, i, k])
@@ -691,85 +876,332 @@ def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
     m1.update()
     m1.Params.OutputFlag = 0
     m1.Params.DualReductions  = 0
+    m.Params.InfUnbdInfo = 1
     start = time.time()
     m1.optimize()
-    if m1.status == 2:   
-        '''         
-        print("Solving model took ", time.time() - start, " sec")
-        print(m1.status)
-        print(m1.objVal)
-        print(ivt.getValue())
-        print(twt.getValue())
-        print(rwt.getValue())
-        '''
+    if m1.status == 2:                               
+        if verbose == 1:               
+            print("Solving model took ", time.time() - start, " sec", m1.status)
+            print(m1.objVal)
+            print(ivt.getValue())
+            print(twt.getValue())
+            print(rwt.getValue())
+
 
         expr = 0.0;expr1= 0.0;expr2= 0.0;expr3= 0.0;expr4= 0.0
-        for k in zoneSet:
+        if 'disagg' in types or 'classic' in types:            
+            for k in zoneSet:
+                dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                if 'disagg' in types:
+                    expr = 0.0;expr1= 0.0;expr2= 0.0;expr3= 0.0;expr4= 0.0                
+                for i in nodeSet:
+                    if i == k:
+                        expr += consConstr[i, k].pi * (-dem)
+                    elif (i, k) in tripSet:
+                        expr += consConstr[i, k].pi * tripSet[i, k].demand
+                    else:
+                        expr += 0
+                
+                for i in stops:
+                    for a in nodeSet[i].outLinks:
+                        if linkSet[a].type == 'boarding':     
+                            l = a[1][1]
+                            '''
+                            if len([b for b in freqSet if y[l, b] > 0.4]) > 0:
+                                fa = [b for b in freqSet if y[l, b] > 0.4][0]  
+                            else:
+                                fa = float("inf")      
+                            '''
+                            for f in freqSet:
+                                dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                                #bigM = round(dem*60.0/fa, 2)
+                                bigM = Wtbar[i, k]
+                                expr1 += constr2[f, a, i, k].pi * bigM* (1-m.getVarByName('_'.join([l, str(f)])))
+                                expr2 += constr3[f, a, i, k].pi * bigM * m.getVarByName('_'.join([l, str(f)]))
+
+                                    
+                for i in zoneSet:   
+                    for a in nodeSet[i].outLinks:
+                        if linkSet[a].type == 'road':
+                            #na = [b for b in fleetSet if N[i, b] > 0.4][0]
+                            for n in fleetSet:
+                                dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                                #bigM = dem * (1.0 / (A*na*1.0))            
+                                bigM = Wrbar[i, k]
+                                expr3 += constr6[n, a, i, k].pi * bigM * (1 - m.getVarByName('_'.join([i, str(n)])))
+                                expr4 += constr7[n, a, i, k].pi * bigM * m.getVarByName('_'.join([i, str(n)]))
+                                    
+                if 'disagg' in types:
+                    m.addConstr(m.getVarByName('eta_'+str(k))  >= expr  + expr1 + expr2 + expr3 + expr4)
+         
+            if 'classic'in types:
+                m.addConstr(sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= expr  + expr1 + expr2 + expr3 + expr4)   
             
-            for i in nodeSet:
-                tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
-                if i == k:
-                    dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
-                    expr += consConstr[i, k].pi * (-dem)
-                elif (i, k) in tripSet:
-                    dem = tripSet[i, k].demand
-                    expr += consConstr[i, k].pi * tripSet[i, k].demand
-                else:
-                    expr += 0
-            
-            for i in stops:
-                for a in nodeSet[i].outLinks:
-                    if linkSet[a].type == 'boarding':
-                        l = a[1][1]                        
-                        for f in freqSet:
-                            bigM = round(dem*60.0/f, 2)
-                            expr1 += constr2[f, a, i, k].pi * bigM*(1-m.getVarByName('_'.join([l, str(f)])))
-                            expr2 += constr3[f, a, i, k].pi * bigM*m.getVarByName('_'.join([l, str(f)]))
-            
-            for i in zoneSet:     
-                for a in nodeSet[i].outLinks:
-                    if linkSet[a].type == 'road':
-                        for n in fleetSet:
-                            bigM = dem * (1 / (A ))
-                            expr3 += constr6[n, a, i, k].pi * bigM * (1 - m.getVarByName('_'.join([i, str(n)])))
-                            expr4 += constr7[n, a, i, k].pi * bigM * m.getVarByName('_'.join([i, str(n)]))
-                            
-        m.addConstr(sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= expr  + expr1 + expr2 + expr3 + expr4)   
-        '''
-        tmp = 0
-        for k in zoneSet:
+        if 'combinatorial' in types:                
+            tmp = 0
             for l in lineSet:
                 for f in freqSet:
                     if y[l, f] > 0.4:
                         tmp +=  (1-m.getVarByName('_'.join([l, str(f)])))
                     else:
                         tmp +=  m.getVarByName('_'.join([l, str(f)]))                    
-            
+                
             for i in zoneSet:
                 for n in fleetSet:            
                     if N[i, n] > 0.4:
                        tmp +=  (1 - m.getVarByName('_'.join([str(i), str(n)])))
                     else:
                         tmp +=  m.getVarByName('_'.join([str(i), str(n)]))
-        for l in lineSet:
-            if x[l] > 0.4:
-                tmp +=  (1-m.getVarByName(str(l)))
-            else:
-                tmp +=  (m.getVarByName(str(l)))
-                
-        m.addConstr((m1.objVal-687555) * tmp + sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= m1.objVal)   
+            for l in lineSet:
+                if x[l] > 0.4:
+                    tmp +=  (1-m.getVarByName(str(l)))
+                else:
+                    tmp +=  (m.getVarByName(str(l)))
 
+
+            m.addConstr((m1.objVal - 714100) * tmp + sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= m1.objVal)
+        
         m.update()
-        '''
         return m, m1.objVal
 
     else:
         print("Extreme ray encountered!", m1.status)
         m1.computeIIS()
-        m1.write("Infeasible_model.ilp")
-                
+        m1.write("Infeasible_model.ilp")            
+        tmp = 0
+        for l in lineSet:
+            for f in freqSet:
+                if y[l, f] > 0.4:
+                    tmp +=  (1-m.getVarByName('_'.join([l, str(f)])))
+                else:
+                    tmp +=  m.getVarByName('_'.join([l, str(f)]))                    
+            
+        for i in zoneSet:
+            for n in fleetSet:            
+                if N[i, n] > 0.4:
+                   tmp +=  (1 - m.getVarByName('_'.join([str(i), str(n)])))
+                else:
+                    tmp +=  m.getVarByName('_'.join([str(i), str(n)]))
+        for l in lineSet:
+            if x[l] > 0.4:
+                tmp +=  (1-m.getVarByName(str(l)))
+            else:
+                tmp +=  (m.getVarByName(str(l)))
 
-def Benders(eps=1000, maxIt=1000, type= 'classic'):
+
+        m.addConstr(tmp>= 1)
+
+        
+        m.update()
+        
+        return m, float("inf")
+    
+    
+    
+
+    
+                    
+
+                
+    
+def callBackFunction(m, where):
+    
+    if where == GRB.Callback.MIPSOL: 
+        
+        print('-------------------------------------------------------------------------------')
+        x = {l:round(m.cbGetSolution(m.getVarByName(str(l)))) for l in lineSet}; y = {(l, f):round(m.cbGetSolution(m.getVarByName('_'.join([l, str(f)]))))  for f in freqSet for l in lineSet}; N =  {(i, n):round(m.cbGetSolution(m.getVarByName('_'.join([i, str(n)]))))  for i in zoneSet for n in fleetSet}
+        #print({k:x[k] for k in x if x[k] > 0.4}); print({k:y[k] for k in y if y[k] > 0.4});print({k:N[k] for k in N if N[k] > 0.4})
+        '''
+        print('MIPSOL_OBJ -- Objective value for new solution.', m.cbGet(GRB.Callback.MIPSOL_OBJ))
+        print('MIPSOL_OBJBST -- Current best objective.', m.cbGet(GRB.Callback.MIPSOL_OBJBST))
+        print('MIPSOL_OBJBND -- Current best objective bound.', m.cbGet(GRB.Callback.MIPSOL_OBJBND))
+        print('MIPSOL_NODCNT -- Current explored node count', m.cbGet(GRB.Callback.MIPSOL_NODCNT))
+        print('MIPSOL_SOLCNT -- Current count of feasible solutions found.',m.cbGet(GRB.Callback.MIPSOL_SOLCNT ))
+        '''
+        #LB = m.cbGet(GRB.Callback.MIPSOL_OBJBND)
+        
+        LB = sum([m.cbGetSolution(m.getVarByName('eta_'+ k)) for k in zoneSet])
+        
+        
+        ob, Wtbar, Wrbar = bigMCalc(y, N, verbose = 0)
+        m1 =Model()
+        v = {(a, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+        Wt = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+        Wr = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+        t = {}; omega ={}
+
+        for k in zoneSet:
+            for i in stops:
+                for a in nodeSet[i].outLinks:
+                    if linkSet[a].type == 'boarding':
+                        for f in freqSet:
+                            t[f, a, i, k] = m1.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['t', str(f), str(a), i, k]))
+     
+            for i in zoneSet:
+                for a in nodeSet[i].outLinks:
+                    if linkSet[a].type == 'road':
+                        for n in fleetSet:
+                            omega[n, a, i, k] = m1.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['omega', str(n), str(a), i, k]))
+            
+        m1.update()    
+       
+        cons = {}; constr1 = {}; constr2 = {};constr3 = {};constr4 = {};
+       
+        for k in zoneSet:
+            dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+            for i in nodeSet:
+                tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
+                if i == k:
+                    dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                    cons[i, k] = m1.addConstr(tmp == -dem)
+                elif (i, k) in tripSet:
+                    cons[i, k] = m1.addConstr(tmp == tripSet[i, k].demand)
+                else:
+                    cons[i, k] = m1.addConstr(tmp == 0)
+      
+            for i in stops:
+                for a in nodeSet[i].outLinks:
+                    if linkSet[a].type == 'boarding':
+                        l = a[1][1]   
+                        '''
+                        if len([b for b in freqSet if y[l, b] > 0.4]) > 0:
+                            fa = [b for b in freqSet if y[l, b] > 0.4][0]  
+                        else:
+                            fa = float("inf")
+                        '''
+   
+                        m1.addConstr(v[a, k] <=   sum([(f/60.0) * t[f, a, i, k] for f in freqSet]))
+                        for f in freqSet:
+                            #bigM = round(dem*60.0/fa, 2)
+                            bigM = Wtbar[i, k]
+                            constr1[f,a,i, k] = m1.addConstr(Wt[i, k] - t[f, a, i, k] <= bigM*(1-y[l, f]), name = 'c_' + str(f)+ str(a)+str(i) + str(k))
+                            constr2[f,a,i, k] = m1.addConstr(t[f, a, i, k] <= bigM*y[l, f], name = 'm_' + str(f)+ str(a)+str(i) + str(k))
+                            m1.addConstr(Wt[i, k] >= t[f, a, i, k])
+                              
+            for i in zoneSet: 
+                for a in nodeSet[i].outLinks:
+                    if linkSet[a].type == 'road': 
+                        #na = [b for b in fleetSet if N[i, b] > 0.4][0]
+                        m1.addConstr(v[a, k] <= A * sum([n * omega[n, a, i, k] for n in fleetSet]))
+                        for n in fleetSet:                       
+                            #bigM = dem * (1 / (A*na)) 
+                            bigM = Wrbar[i, k]
+                            constr3[i, a, i, k] = m1.addConstr(Wr[i, k] - omega[n, a, i, k] <= bigM*(1 - N[i, n]))
+                            constr4[i, a, i, k] = m1.addConstr(omega[n, a, i, k] <= bigM*N[i, n])
+                            m1.addConstr(Wr[i, k] >= omega[n, a, i, k])       
+    
+        m1.update()
+        ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
+        twt = sum([Wt[k] for k in Wt])
+        rwt = sum([Wr[k] for k in Wr])
+        obj = ivt +  rwt + twt 
+        m1.setObjective(obj, sense=GRB.MINIMIZE)
+        m1.update()
+        m1.Params.OutputFlag = 0
+        m1.Params.DualReductions  = 0
+        m1.Params.InfUnbdInfo = 1
+        start = time.time()
+        m1.optimize()
+        if m1.status == 2:   
+            UB = m1.objVal
+            print((LB, UB, UB - LB,  [k for k in x if round(x[k]) == 0]))
+            if UB - LB >= 10:               
+                for k in zoneSet:
+                    expr = 0.0
+                    dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                    for i in nodeSet:
+                        tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
+                        if i == k:
+                            dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+                            expr += -dem*cons[i, k].pi
+                        elif (i, k) in tripSet:
+                            expr += tripSet[i, k].demand*cons[i, k].pi
+                        else:
+                            expr += 0*cons[i, k].pi
+               
+                    for i in stops:
+                        for a in nodeSet[i].outLinks:
+                            if linkSet[a].type == 'boarding':
+                                l = a[1][1]    
+                                '''
+                                if len([b for b in freqSet if y[l, b] > 0.4]) > 0:
+                                    fa = [b for b in freqSet if y[l, b] > 0.4][0]  
+                                else:
+                                    fa = float("inf")    
+                                '''
+                                
+                                for f in freqSet:
+                                    #bigM = round(dem*60.0/fa, 2)
+                                    bigM = Wtbar[i, k]
+                                    expr += constr1[f,a,i, k].pi*bigM*(1-m.getVarByName('_'.join([l, str(f)])))
+                                    expr += constr2[f,a,i, k].pi*bigM*m.getVarByName('_'.join([l, str(f)]))
+                                       
+                    for i in zoneSet: 
+                        for a in nodeSet[i].outLinks:
+                            if linkSet[a].type == 'road': 
+                                #na = [b for b in fleetSet if N[i, b] > 0.4][0]                               
+                                for n in fleetSet:                       
+                                    #bigM = dem * (1.0 / (A*na)) 
+                                    bigM = Wrbar[i, k]
+                                    expr += constr3[i, a, i, k].pi*bigM*(1 - m.getVarByName('_'.join([i, str(n)])))
+                                    expr += constr4[i, a, i, k].pi*bigM*m.getVarByName('_'.join([i, str(n)]))
+                    m.cbLazy(m.getVarByName('eta_'+ k) >= expr)
+                    m.update()
+                    m._cuts += 1
+                    
+                '''    
+                tmp = 0
+                for l in lineSet:
+                    for f in freqSet:
+                        if y[l, f] > 0.4:
+                            tmp +=  (1-m.getVarByName('_'.join([l, str(f)])))
+                        else:
+                            tmp +=  m.getVarByName('_'.join([l, str(f)]))                    
+                    
+                for i in zoneSet:
+                    for n in fleetSet:            
+                        if N[i, n] > 0.4:
+                           tmp +=  (1 - m.getVarByName('_'.join([str(i), str(n)])))
+                        else:
+                            tmp +=  m.getVarByName('_'.join([str(i), str(n)]))
+                for l in lineSet:
+                    if x[l] > 0.4:
+                        tmp +=  (1-m.getVarByName(str(l)))
+                    else:
+                        tmp +=  (m.getVarByName(str(l)))
+
+
+                m.cbLazy((UB - 600360) * tmp + sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= UB)
+                m._cuts += 1
+                '''
+            
+
+            print('Total %d optimality cuts have been added' %m._cuts)      
+        elif where == GRB.Callback.MIPNODE:
+            m.cbSetSolution(_var, _sols)
+            objval = m.cbUseSolution()
+        else:
+            print('infeasible model --- ')
+            m.terminate()
+            
+    
+    '''
+    elif where == GRB.Callback.MIPNODE:
+        #m.cbSetSolution(m._var, m._sols)
+        print('#########################################################################')
+        print('MIP_OBJBST -- Current best objective = ', m.cbGet(GRB.Callback.MIP_OBJBST))
+        print('MIP_OBJBND -- Current best objective bound = ', m.cbGet(GRB.Callback.MIP_OBJBND))
+        print('MIP_NODCNT -- Current explored node count = ', m.cbGet(GRB.Callback.MIP_NODCNT))
+        print('MIP_SOLCNT -- Current count of feasible solutions found = ', m.cbGet(GRB.Callback.MIP_SOLCNT))
+        print('MIP_CUTCNT -- Current count of cutting planes applied = ', m.cbGet(GRB.Callback.MIP_CUTCNT))
+        print('MIP_NODLFT -- Current unexplored node count = ', m.cbGet(GRB.Callback.MIP_NODLFT))
+    '''
+       
+               
+
+
+
+def Benders(eps=100, maxIt=1000, types= ['classic'], verbose = 0, multIt= 0):
     '''
     Implements benders decomposition
     eps = tolerance in the UB and LB
@@ -777,86 +1209,109 @@ def Benders(eps=1000, maxIt=1000, type= 'classic'):
     type = can be classic, aggregated, multiple cuts, 
     
     '''
-    UB = float("inf")
-    LB = -float("inf")
-    optCuts = []
-    tol = float("inf")
-    it = 0
+    UB = float("inf"); LB = -float("inf"); tol = float("inf"); ite = 0
     '''
     Computing initial values for the subproblem
     '''
     x0 = {l: 1 for l in lineSet}
     y0 = {(l, f): 1 for f in freqSet for l in lineSet}
     for k in y0:
-        if k[1] != 12:
+        if k[1] != 2:
             y0[k] = 0
     N0 = {(i, n): 1 for i in zoneSet for n in fleetSet}
     for k in N0:
-        if k[1] != 50:
+        if k[1] != 100:
             N0[k] = 0           
             
-    m = setupMasterProblemModel(type=type)
-    solutions = [(x0,y0,N0)]
-    solutionsEverFound = [(x0,y0,N0)]
-    
- 
-    while tol != 0 and it < maxIt:   
+    m = setupMasterProblemModel(types=types)
+    solutions = [(x0,y0,N0)]; solutionsEverFound = [(x0,y0,N0)] 
+    initialConstrs = m.getConstrs()
+    print('It \t | LB \t| UB \t| tol')
+    print('---------------------------------------------')
+    while tol >= eps:   
+        if ite > maxIt:
+            print('%d | %d | %d | %d | %d'%(ite, LB, UB, tol, m.status))
+            break
         for s in solutions:
-            m, obj  = BendersSubProblem(s[0], s[1], s[2], m)
-            
-        UB = round(obj) #min(UB, obj)
-        m.optimize()
+            m, obj  = BendersSubProblem(s[0], s[1], s[2], m, types = types, verbose= 0)    
+            if obj != float("inf"): UB = round(obj) #min(UB, obj)
+        m.optimize()             
         if m.status == 2:
-            ob = m.objVal; x0 = {l:m.getVarByName(str(l)).x for l in lineSet}; y0 = {(l, f):m.getVarByName('_'.join([l, str(f)])).x  for f in freqSet for l in lineSet}; N0 =  {(i, n):m.getVarByName('_'.join([i, str(n)])).x  for i in zoneSet for n in fleetSet}
-            LB = round(ob)
             solutions = []
-            if (x0, y0, N0) not in solutionsEverFound :
-                solutionsEverFound.append((x0, y0, N0))
-                solutions.append((x0, y0, N0))
-                
-            if type == 'multiple':                
-                nSolutions = m.SolCount            
+            ob2 = m.objVal #+  sum([-x0[k]*yl[k] for k in yl]);
+            x0 = {l:round(m.getVarByName(str(l)).x) for l in lineSet}; y0 = {(l, f):round(m.getVarByName('_'.join([l, str(f)])).x)  for f in freqSet for l in lineSet}; N0 =  {(i, n):round(m.getVarByName('_'.join([i, str(n)])).x)  for i in zoneSet for n in fleetSet}
+            LB = round(ob2)
+            for i in zoneSet:                    
+                if sum([N0[i, n] for n in fleetSet]) < 0.4:
+                    print(i)           
+            solutionsEverFound.append((x0, y0, N0))
+            solutions.append((x0, y0, N0))
+            
+            
+            if 'active' in types:            
+                if ite in [15, 20, 25]: # After this iteration, the master problem becomes slow so we remove the inactive constraints                
+                    for con in m.getConstrs():
+                        if con.Slack == 0 and con not in initialConstrs:                    
+                            m.remove(con)
+                         
+            
+            if 'multiple' in types and multIt >= ite:     
+                nSolutions = m.SolCount                  
                 if (nSolutions >= 2):
                     for solNum in range(nSolutions - 1):                    
                         m.setParam(GRB.Param.SolutionNumber, solNum+1)
-                        ob = m.objVal; x0 = {l:m.getVarByName(str(l)).x for l in lineSet}; y0 = {(l, f):m.getVarByName('_'.join([l, str(f)])).x  for f in freqSet for l in lineSet}; N0 =  {(i, n):m.getVarByName('_'.join([i, str(n)])).x  for i in zoneSet for n in fleetSet}
-                        LB = max(LB, round(ob))
-                        if (x0, y0, N0) not in solutionsEverFound:
-                            solutionsEverFound.append((x0, y0, N0))
-                            solutions.append((x0, y0, N0))
+                        ob = m.PoolObjBound
+                        x0 = {l:int(m.getVarByName(str(l)).Xn) for l in lineSet}; y0 = {(l, f):int(m.getVarByName('_'.join([l, str(f)])).Xn)  for f in freqSet for l in lineSet}; N0 =  {(i, n):int(m.getVarByName('_'.join([i, str(n)])).Xn)  for i in zoneSet for n in fleetSet}
+                        
+                        passed = 1
+                        for i in zoneSet:
+                            if sum([N0[i, n] for n in fleetSet]) < 0.4:
+                                passed = 0
+
+                        if passed == 1:                            
+                            if (x0, y0, N0) not in solutionsEverFound:
+                                solutionsEverFound.append((x0, y0, N0))
+                                solutions.append((x0, y0, N0))
+                                LB = max(LB, round(ob))
         else:
-            print('master problem cannot be solved... \n Terminating ....')
+            print('master problem cannot be solved... \n Terminating ....', m.status)      
+            m.computeIIS()
+            m.write("Infeasible_model.ilp")                 
             break
        
         tol = UB - LB
-        it += 1
-        print((it, LB, UB, tol,  [k for k in x0 if round(x0[k]) == 0]))
-    return (x0, y0, N0)
+        ite += 1
+        print('%d | %d | %d | %d'%(ite, LB, UB, tol))
+        #print([k for k in x0 if round(x0[k]) == 0])
+
+                
+                
+        
+    return (x0, y0, N0), m
 
 
             
-            
-            
+
 
     
 ################################################################################################
-loc = 'Z:/Projects/NSF_SCC/Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/Siuox Falls network/'
+loc = 'S:/Projects/NSF_SCC/Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/Siuox Falls network/'
 start = time.time()
 alpha = [4, 2] # Fuel, transfer penalty
 baseTaxiFare = 0.8 # in dollars
 fuelCost = 0.21 # in dollars
 transitFare = 2 # in dollars applies to only access and mode transfer links
 VOT = 23 # in dollars per minute
-freqSet =[12, 6]# [2, 3, 4, 6, 12] #  Buses per hour
+freqSet = [2, 3, 4, 6, 12] # [2,12]#  Buses per hour
 #freqSet = [1/60, 1/30, 1/6, 1/4, 1/2]
 #freqSet = [float(f) for f in freqSet]
-fleetSet = [1, 50] # [1, 50, 100, 200, 500] # 
-tBigM = 200
+fleetSet =  [1, 50, 100, 200, 500] # [50, 100] # 
+tBigM = 100
 BigM = 100000
 rWaitFac = 1000
 A =  6.06/3600 #48.31 # 6.06 for actual alpha
 
-maxBusFleet = 200
+maxBusFleet = 100
 maxAVfleet = 3000
 
 
@@ -890,11 +1345,82 @@ stops = list({k for k in nodeSet if nodeSet[k].type == 'stop'})
 
 #############################################################################################
 # Testing
-start = time.time()
+start2 = time.time()
+# Combinatorial cuts are not correct.
 #solveGurobiModel()
-Benders()
-print('It took ', time.time() - start)
+
+busesRequired ={}
+for f in freqSet:    
+    tempVeh = 0
+    for l in lineSet:
+        tempTime = sum([linkSet[a].time for a in lineSet[l].links])
+        busesRequired[l, f] =  tempTime * (f/60.0)
 
 
+types= ['clique', 'disagg']
+# active removes the inactive disaggregated cuts
 
+'''
+yl = {}
+for li in lineSet:    
+    ob1 = transitAssignment(li, 0, 0) 
+    ob2 = transitAssignment(li, 2, 0) - ob1
+    yl[li] = ob2
+'''
+#['disagg', 'clique', 'combinatorial']
+#(xf, yf, Nf), tol = Benders(eps = 100, types = ['disagg', 'multiple'], verbose = 0, 20)
+#
+
+
+m = setupMasterProblemModel(types=types)    
+(xf, yf, Nf), m = Benders(eps = 10, maxIt = 1000, types = types, verbose = 0, multIt = 20) 
+
+# Pass data into my callback function
+
+
+'''
+logfile = open('cb.log', 'w')
+
+#m = setupMasterProblemModel(types=types)
+m._logfile = logfile
+   
+
+m._cuts = 0 #m.reset(0)
+m._var = []
+m._sols = []
+
+for l in lineSet:
+    m._var.append(m.getVarByName(str(l)))
+    m._sols.append(1)
+
+for l in lineSet:
+    for f in freqSet:
+        if f != 2:
+            m._var.append(m.getVarByName('_'.join([l, str(f)])))
+            m._sols.append(0)
+        else:
+            m._var.append(m.getVarByName('_'.join([l, str(f)])))
+            m._sols.append(1)
+
+for i in zoneSet:
+    for n in fleetSet:
+        if n != 100:
+            m._var.append(m.getVarByName('_'.join([i, str(n)])))
+            m._sols.append(0)
+        else:
+            m._var.append(m.getVarByName('_'.join([i, str(n)])))
+            m._sols.append(1)
+    
+m.reset(0)
+tol = float("inf")
+while tol > 1000:
+    m.optimize(callBackFunction)   
+    LB = m.objVal
+    x0 = {l:round(m.getVarByName(str(l)).x) for l in lineSet}; y0 = {(l, f):round(m.getVarByName('_'.join([l, str(f)])).x)  for f in freqSet for l in lineSet}; N0 =  {(i, n):round(m.getVarByName('_'.join([i, str(n)])).x)  for i in zoneSet for n in fleetSet}
+    m, UB  = BendersSubProblem(x0, y0, N0, m, types = types, verbose= 0)    
+    tol = UB - LB
+    print(tol)
+    m.reset(0)
+'''
+print('It took ', time.time() - start2)
 

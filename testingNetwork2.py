@@ -55,8 +55,6 @@ class Link:
         self.passengers = []
         self.active = 1
         self.lineId = ""
-        self.freq = float("inf")
-        self.veh = float("inf")
         
         
 class Line:
@@ -114,24 +112,10 @@ def readNodes():
     for x in inFile:
         tmpIn = x.strip().split("\t")
         if tmpIn[0] not in nodeSet:
-            nodeSet[tmpIn[0]] = Node([tmpIn[1], tmpIn[2], "road"])            
+            nodeSet[tmpIn[0]] = Node([tmpIn[1], tmpIn[2], "road"])
+            zoneSet[tmpIn[0]] =Zone(tmpIn)
         else:
             print(tmpIn[2], " roadNode already present as ", nodeSet[tmpIn[2]].type)
-        
-        if (tmpIn[0], 'origin') not in nodeSet:
-            nodeSet[(tmpIn[0], 'origin')] = Node([tmpIn[1], tmpIn[2], "origin"])     
-            zoneSet[(tmpIn[0], 'origin')] =Zone(tmpIn)
-        else:
-            print(tmpIn[2], " roadNode already present as ", nodeSet[tmpIn[2]].type)
-            
-        if (tmpIn[0], 'dest') not in nodeSet:
-            nodeSet[(tmpIn[0], 'dest')] = Node([tmpIn[1], tmpIn[2], "dest"])     
-            zoneSet[(tmpIn[0], 'dest')] =Zone(tmpIn)
-        else:
-            print(tmpIn[2], " roadNode already present as ", nodeSet[tmpIn[2]].type)
-            
-            
-            
     inFile.close()
         
     # Reading transit nodes
@@ -145,10 +129,6 @@ def readNodes():
             print(tmpIn[0], " stop already present as ", nodeSet[tmpIn[0]].type)
     inFile.close()
 
-            
-
-        
-        
 
 def readLinks():
     """
@@ -160,22 +140,22 @@ def readLinks():
     tmpIn = inFile.readline().strip().split("\t")
     for x in inFile:
         tmpIn = x.strip().split("\t")
-        linkId =((tmpIn[0], 'origin'), tmpIn[1])
+        linkId =(tmpIn[0], tmpIn[1])
         if linkId not in linkSet:
             linkSet[linkId] = Link(tmpIn, "zoneAccess")
-            if linkId not in nodeSet[(tmpIn[0], 'origin')].outLinks:
-                nodeSet[(tmpIn[0], 'origin')].outLinks.append(linkId)
+            if linkId not in nodeSet[tmpIn[0]].outLinks:
+                nodeSet[tmpIn[0]].outLinks.append(linkId)
             if linkId not in nodeSet[tmpIn[1]].inLinks:
                 nodeSet[tmpIn[1]].inLinks.append(linkId)
         else:
             print(linkId, " stop already present as ", linkSet[linkId].type)
-        linkId =(tmpIn[1], (tmpIn[0], 'dest'))
+        linkId =(tmpIn[1], tmpIn[0])
         if linkId not in linkSet:
             linkSet[linkId] = Link([tmpIn[1], tmpIn[0], tmpIn[2], tmpIn[3]], "zoneEgress")
             if linkId not in nodeSet[tmpIn[1]].outLinks:
                 nodeSet[tmpIn[1]].outLinks.append(linkId)
-            if linkId not in nodeSet[(tmpIn[0], 'dest')].inLinks:
-                nodeSet[(tmpIn[0], 'dest')].inLinks.append(linkId)
+            if linkId not in nodeSet[tmpIn[0]].inLinks:
+                nodeSet[tmpIn[0]].inLinks.append(linkId)
         else:
             print(linkId, " stop already present as ", linkSet[linkId].type)
     inFile.close()
@@ -194,12 +174,7 @@ def readLinks():
             if linkId not in nodeSet[tmpIn[1]].inLinks:
                 nodeSet[tmpIn[1]].inLinks.append(linkId)
     inFile.close()
- 
     
- 
-
-        
-        
 def readLines():
     # Reading transit stops
     inFile = open(loc + "ft_input_routes.dat")
@@ -291,22 +266,16 @@ def readTransferLinks():
                 
 
     inFile.close()
-
-
-
-        
     
 def createBoardAlightLinks():
-    transitNodes = list({k for k in nodeSet if nodeSet[k].type not in ['stop', 'dest', 'origin', 'road']})
+    transitNodes = list({k for k in nodeSet if nodeSet[k].type not in ['road', 'stop']})
     for l in transitNodes:
-        for f in freqSet:                
-            linkId = (l[0], l, f)
-            if linkId not in linkSet:
-                linkSet[linkId] = Link([l[0], l, 0, 0], "boarding")
-                linkSet[linkId].freq = f
-                if linkId not in nodeSet[l[0]].outLinks:
+        linkId = (l[0], l)
+        if linkId not in linkSet:
+            linkSet[linkId] = Link([l[0], l, 0, 0], "boarding")
+            if linkId not in nodeSet[l[0]].outLinks:
                     nodeSet[l[0]].outLinks.append(linkId)
-                if linkId not in nodeSet[l].inLinks:
+            if linkId not in nodeSet[l].inLinks:
                     nodeSet[l].inLinks.append(linkId)
         linkId = (l, l[0])
         if linkId not in linkSet:
@@ -315,29 +284,6 @@ def createBoardAlightLinks():
                     nodeSet[l].outLinks.append(linkId)
             if linkId not in nodeSet[l[0]].inLinks:
                     nodeSet[l[0]].inLinks.append(linkId)
-                        
-                        
-    originNodes = [k for k in nodeSet if nodeSet[k].type == 'origin']
-    for k in originNodes:
-        for n in fleetSet:
-            linkId = (k, k[0], n)
-            if linkId not in linkSet:
-                linkSet[linkId] = Link([k, k[0], 0, 0], "origin")
-                linkSet[linkId].veh = n
-                if linkId not in nodeSet[k].outLinks:
-                    nodeSet[k].outLinks.append(linkId)
-                if linkId not in nodeSet[k[0]].inLinks:
-                    nodeSet[k[0]].inLinks.append(linkId)
-    destNodes = [k for k in nodeSet if nodeSet[k].type == 'dest']
-    for k in destNodes:
-        linkId = (k[0], k)
-        if linkId not in linkSet:
-            linkSet[linkId] = Link([k[0],k, 0, 0], "dest")
-            if linkId not in nodeSet[k[0]].outLinks:
-                nodeSet[k[0]].outLinks.append(linkId)
-            if linkId not in nodeSet[k].inLinks:
-                nodeSet[k].inLinks.append(linkId)
-    
         
 def readDemand():
     '''
@@ -350,7 +296,10 @@ def readDemand():
         tmpIn = x.strip().split("\t")
         passengerSet[Id] = Passenger(tmpIn)
         Id = Id +1
-        pairId = ((tmpIn[0], 'origin'), (tmpIn[1], 'dest'))
+        pairId = (tmpIn[0], tmpIn[1])
+        if tmpIn[1] not in zoneSet[tmpIn[0]].dest:
+            zoneSet[tmpIn[0]].dest.append(tmpIn[1])
+            
         if pairId not in tripSet:
             tripSet[pairId] = Demand(tmpIn)
         else:
@@ -449,50 +398,47 @@ def analyzeTimeDistr():
     plt.show()
 ################################################################################################
 def transitAssignment():
+    '''
+    This solves the transit assignment problem
+    :return:
+    '''
+    
     m = Model()
-    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), str(k)])) for a in linkSet for k in destSet}
-    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, str(k)])) for i in stops for k in destSet}
-    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', str(i), str(k)])) for i in originSet for k in destSet}
+    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+
     m.update()
-    for k in destSet:
-        dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+    consConstr ={};rWaitConstr = {};tWaitConstr ={}
+    for k in zoneSet:
         for i in nodeSet:
             tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
             if i == k:
                 dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
-                m.addConstr(tmp == -dem)
+                consConstr[i, k] = m.addConstr(tmp == -dem)
             elif (i, k) in tripSet:
-                m.addConstr(tmp == tripSet[i, k].demand)
+                consConstr[i, k] = m.addConstr(tmp == tripSet[i, k].demand)
             else:
-                m.addConstr(tmp == 0)
-        
-        for i in stops:
-            for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'boarding':
-                    l = a[1][1]; f = round(linkSet[a].freq)
-                    m.addConstr(v[a, k] <=   round(12/60.0, 2) * Wt[i, k])
-                    
-                        
+                consConstr[i, k] = m.addConstr(tmp == 0)
 
-                        
-        for i in originSet: 
+        for i in stops:
+            for l in nodeSet[i].outLinks:
+                if linkSet[l].type == 'boarding':
+                    m.addConstr(v[l, k] <= (12/60.0)*Wt[i, k])
+
+        for i in zoneSet: 
             for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'origin':
-                    n = a[2]
-                    m.addConstr(v[a, k] <= A * 50 * Wr[i, k])
-                    
-    
-    m.update()
-    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in destSet])
+                if linkSet[a].type == 'road':
+                    m.addConstr(v[a, k] <= A * 50*Wr[i, k])
+
+    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
     twt = sum([Wt[k] for k in Wt])
     rwt = sum([Wr[k] for k in Wr])
-    obj = ivt + twt + rwt 
-    m.setObjective(obj, sense=GRB.MINIMIZE)                       
+    obj = ivt +rwt + twt 
+    m.setObjective(obj, sense=GRB.MINIMIZE)
     m.update()
     m.Params.OutputFlag = 0
-    m.Params.DualReductions  = 0
-    m.Params.InfUnbdInfo = 1
-    start = time.time()
+    m.Params.DualReductions = 0
     m.optimize()
     print("Solving model took ", time.time() - start, " sec", m.status)
     print(m.objVal)
@@ -505,29 +451,42 @@ def solveGurobiModel():
     m = Model()
     x = {l: m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name=str(l)) for l in lineSet}
     y = {(l, f): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([l, str(f)])) for f in freqSet for l in lineSet}
-    N = {(i, n): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([str(i), str(n)])) for i in originSet for n in fleetSet}
+    N = {(i, n): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([i, str(n)])) for i in zoneSet for n in fleetSet}
     
 
-    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), str(k)])) for a in linkSet for k in destSet}
-    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, str(k)])) for i in stops for k in destSet}
-    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', str(i), str(k)])) for i in originSet for k in destSet}
-    m.update()
+    v = {(a, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+    Wt = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wr = {(i, k): m.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+    t = {}; omega ={}
+    for k in zoneSet:
+        for i in stops:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'boarding':
+                    for f in freqSet:
+                        t[f, a, i, k] = m.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['t', str(f), str(a), i, k]))
+        
+        for i in zoneSet:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'road':
+                    for n in fleetSet:
+                        omega[n,a, i, k] = m.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['omega', str(n), str(a), i, k]))
+    m.update()    
   
-
+    
     tempVeh = 0
     for l in lineSet:
         tempTime = sum([linkSet[a].time for a in lineSet[l].links])
-        tempVeh +=  tempTime * (sum([round(f/60.0, 2) * y[l, f] for f in freqSet]))
+        tempVeh +=  tempTime * (sum([(f/60.0) * y[l, f] for f in freqSet]))
         m.addConstr(sum([y[l, f] for f in freqSet]) == x[l])
     m.addConstr(tempVeh <= maxBusFleet)
     
     tempVeh = 0
-    for i in originSet:
+    for i in zoneSet:
         tempVeh += sum([n * N[i, n] for n in fleetSet])
         m.addConstr(sum([N[i, n] for n in fleetSet]) == 1)
     m.addConstr(tempVeh <= maxAVfleet)
        
-    for k in destSet:
+    for k in zoneSet:
         dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
         for i in nodeSet:
             tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
@@ -538,45 +497,66 @@ def solveGurobiModel():
                 m.addConstr(tmp == tripSet[i, k].demand)
             else:
                 m.addConstr(tmp == 0)
-        
+
         for i in stops:
             for a in nodeSet[i].outLinks:
                 if linkSet[a].type == 'boarding':
-                    l = a[1][1]; f = round(linkSet[a].freq)
-                    m.addConstr(v[a, k] <=   round(f/60.0, 2) * Wt[i, k])
-                    m.addConstr(v[a, k] <=   BigM*y[l, f], name = str((i, a, k)))
+                    l = a[1][1]
+                    m.addConstr(v[a, k] <=   sum([(f/60.0) * t[f, a, i, k] for f in freqSet]))
+                    for f in freqSet:
+                        m.addConstr(Wt[i, k] - t[f, a, i, k] <= BigM*(1-y[l, f]), name = 'c_' + str(f)+ str(a)+str(i) + str(k))
+                        m.addConstr(t[f, a, i, k] <= BigM*y[l, f], name = 'm_' + str(f)+ str(a)+str(i) + str(k))
+                        m.addConstr(Wt[i, k] >= t[f, a, i, k])
                         
 
                         
-        for i in originSet: 
+                
+        for i in zoneSet: 
             for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'origin':
-                    n = a[2]
-                    m.addConstr(v[a, k] <= A * n * Wr[i, k])
-                    m.addConstr(v[a, k] <=   BigM*N[i, n])
+                if linkSet[a].type == 'road':
+                    m.addConstr(v[a, k] <= A * sum([n * omega[n, a, i, k] for n in fleetSet]))
+                    for n in fleetSet:
+                        bigM = dem * (1/ (A ))
+                        m.addConstr(Wr[i, k] - omega[n, a, i, k] <= BigM*(1 - N[i, n]))
+                        m.addConstr(omega[n, a, i, k] <= BigM*N[i, n])
+                        m.addConstr(Wr[i, k] >= omega[n, a, i, k])
+
                     
     m.update()
-    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in destSet])
+    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
     twt = sum([Wt[k] for k in Wt])
     rwt = sum([Wr[k] for k in Wr])
-    obj = ivt + twt + rwt 
+    obj = ivt + rwt + twt
     m.setObjective(obj, sense=GRB.MINIMIZE)
-    
+    '''
+    for k in zoneSet:
+        for i in stops:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'boarding':
+                    l = a[1][1]
+                    for f in freqSet:
+                        m.setObjective(t[f, a, i, k], sense=GRB.MAXIMIZE)
+                        m.Params.OutputFlag = 0
+                        m.update()
+                        m.optimize()
+                        if m.status == 2:                            
+                            print(m.objVal)
+                        else:
+                            print('Not possible', m.status)
+    '''
                         
     m.update()
     m.Params.OutputFlag = 1
     m.Params.DualReductions  = 0
-    m.Params.InfUnbdInfo = 1
     start = time.time()
     m.optimize()
     if m.status == 2:            
         print("Solving model took ", time.time() - start, " sec")
         print(m.status)
         print(m.objVal)
-        print(ivt.getValue())        
+        print(ivt.getValue())
         print(twt.getValue())
         print(rwt.getValue())
-
         print([k for k in x if x[k].x != 0])
         
         #roadShare =  sum([v[l].x for l in v if linkSet[l[0]].type == 'road'])
@@ -585,71 +565,31 @@ def solveGurobiModel():
             
     else:
         print("Extreme ray encountered!", m.status)
-        for k in m.getVars():
-            print(k.varName, ' = ', k.UnbdRay)
         m.computeIIS()
         m.write("Infeasible_model.ilp")
         
-def computeSomeFeasibleSol(sol):
-    feasSol = []
-    import random
-    for it in range(sol):   
-        passed = 0         
-        x = {l:random.randint(0, 1)  for l in lineSet}
-        y = {(l, f): 0 for f in freqSet for l in lineSet}
-        N = {(i, n): 0 for i in originSet for n in fleetSet}
-
-        for l in lineSet:
-            if x[l] == 1:
-                y[l, random.choice(freqSet)] = 1
-                
-        for i in originSet:
-            N[i, random.choice(fleetSet)] = 1
-                
-   
-        tempVehB = 0
-        for l in lineSet:
-            tempTime = sum([linkSet[a].time for a in lineSet[l].links])
-            tempVehB +=  tempTime * (sum([round(f/60.0, 2) * y[l, f] for f in freqSet]))
-
-        
-        tempVehV = 0
-        for i in originSet:
-            tempVehV += sum([n * N[i, n] for n in fleetSet])
-      
-
-    
-        if tempVehB <= maxBusFleet and tempVehV <= maxAVfleet and (x,y,N) not in feasSol:
-            feasSol.append((x, y, N))
-    return feasSol
-
-
-
-        
-def setupMasterProblemModel(types = ['classic'], verbose = 0):
+def setupMasterProblemModel(type = 'classic', verbose = 0):
     '''
         Sets up the gurobi model
         type = can be classic or multiple 
         verbose = 0: no verbose, 1: print the iterations of Gurobi, 2: print status and objective values,
 
     '''
-    
-
-    m = Model()
+    m = Model()  
     x = {l: m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name=str(l)) for l in lineSet}
     y = {(l, f): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([l, str(f)])) for f in freqSet for l in lineSet}
-    N = {(i, n): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([str(i), str(n)])) for i in originSet for n in fleetSet}
-    eta = {k: m.addVar(vtype = GRB.CONTINUOUS, lb = -GRB.INFINITY , ub =GRB.INFINITY, name = 'eta_'+ str(k)) for k in destSet}
+    N = {(i, n): m.addVar(vtype=GRB.BINARY, obj=1.0, lb=0.0, name='_'.join([i, str(n)])) for i in zoneSet for n in fleetSet}
+    eta = {k: m.addVar(vtype = GRB.CONTINUOUS, lb = -GRB.INFINITY , ub =GRB.INFINITY, name = 'eta_'+ str(k)) for k in zoneSet}
     
     tempVeh = 0
     for l in lineSet:
         tempTime = sum([linkSet[a].time for a in lineSet[l].links])
-        tempVeh +=  tempTime * (sum([round(f/60.0, 2) * y[l, f] for f in freqSet]))
+        tempVeh +=  tempTime * (sum([(f/60.0) * y[l, f] for f in freqSet]))
         m.addConstr(sum([y[l, f] for f in freqSet]) == x[l])
     m.addConstr(tempVeh <= maxBusFleet)
     
     tempVeh = 0
-    for i in originSet:
+    for i in zoneSet:
         tempVeh += sum([n * N[i, n] for n in fleetSet])
         m.addConstr(sum([N[i, n] for n in fleetSet]) == 1)
     m.addConstr(tempVeh <= maxAVfleet)
@@ -659,22 +599,22 @@ def setupMasterProblemModel(types = ['classic'], verbose = 0):
     m.setObjective(sum([eta[k] for k in eta]), sense=GRB.MINIMIZE)
     m.update()
     m.Params.OutputFlag = verbose   
-    if 'multiple' in types:        
+    if type == 'multiple':        
         m.Params.lazyConstraints = 1
         # Limit how many solutions to collect
-        m.setParam(GRB.Param.PoolSolutions, 10)
+        m.setParam(GRB.Param.PoolSolutions, 2)
         # Limit the search space by setting a gap for the worst possible solution
         # that will be accepted
-        m.setParam(GRB.Param.PoolGap, 0.2)
+        m.setParam(GRB.Param.PoolGap, 0.20)
         # do a systematic search for the k-best solutions
-        m.setParam(GRB.Param.PoolSearchMode, 2)       
+        m.setParam(GRB.Param.PoolSearchMode, 1)       
         #m.Params.lazyConstraints = 1
     m.update()
     return(m)
 
 
                 
-def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
+def BendersSubProblem(x, y, N, m, verbose = 0, type='classic'):
     '''
         Solves the Benders subproblems and applies cuts based on the type of the algorithm
         verbose = 0: no verbose, 1: print status and objective values, 2: print the iterations of Gurobi
@@ -683,19 +623,28 @@ def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
         
     '''
     
-    
-    
     m1 = Model()
-    v = {(a, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), str(k)])) for a in linkSet for k in destSet}
-    Wt = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, str(k)])) for i in stops for k in destSet}
-    Wr = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', str(i), str(k)])) for i in originSet for k in destSet}
-    m1.update()
+    v = {(a, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0, lb = 0.0, name='_'.join(['v', str(a), k])) for a in linkSet for k in zoneSet}
+    Wt = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wt', i, k])) for i in stops for k in zoneSet}
+    Wr = {(i, k): m1.addVar(vtype=GRB.CONTINUOUS, obj =1.0,  lb = -GRB.INFINITY , ub = GRB.INFINITY, name= '_'.join(['wr', i, k])) for i in zoneSet for k in zoneSet}
+    t = {}; omega ={}
+    for k in zoneSet:
+        for i in stops:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'boarding':
+                    for f in freqSet:
+                        t[f, a, i, k] = m1.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['t', str(f), str(a), i, k]))
+        for i in zoneSet:
+            for a in nodeSet[i].outLinks:
+                if linkSet[a].type == 'road':
+                    for n in fleetSet:
+                        omega[n,a, i, k] = m1.addVar(vtype=GRB.CONTINUOUS, lb = 0.0, name= '_'.join(['omega', str(n), str(a), i, k]))
+    m1.update()    
     
-    
-    consConstr = {}; constr1 = {}; constr2 = {}
-
-    for k in destSet:
+    consConstr = {}; constr1 = {}; constr2 = {}; constr3 = {}; constr4 = {}; constr5 = {}; constr6 = {}; constr7 = {}; constr8 = {}                 
+    for k in zoneSet:
         dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+
         for i in nodeSet:
             tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
             if i == k:
@@ -709,50 +658,61 @@ def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
         for i in stops:
             for a in nodeSet[i].outLinks:
                 if linkSet[a].type == 'boarding':
-                    l = a[1][1]; f = round(linkSet[a].freq)
-                    m1.addConstr(v[a, k] <=   round(f/60.0, 2) * Wt[i, k])
-                    constr1[a, k] = m1.addConstr(v[a, k] <=   dem*y[l, f])
-                        
-
-                        
-        for i in originSet: 
+                    l = a[1][1]
+                    
+                    constr1[a, i, k] = m1.addConstr(v[a, k] <=   sum([round(f/60.0, 2) * t[f, a, i, k] for f in freqSet]))
+                    for f in freqSet:
+                        bigM = round(dem*60.0/f, 2)
+                        '''
+                        if dem*60/f > BigM:
+                            print(True, dem*60/f, f)
+                        '''
+                        constr2[f, a, i, k] = m1.addConstr(Wt[i, k] - t[f, a, i, k] <= bigM*(1-y[l, f]))
+                        constr3[f, a, i, k] = m1.addConstr(t[f, a, i, k] <= bigM*y[l, f])
+                        constr4[f, a, i, k] = m1.addConstr(Wt[i, k] >= t[f, a, i, k])
+        
+        for i in zoneSet: 
             for a in nodeSet[i].outLinks:
-                if linkSet[a].type == 'origin':
-                    n = a[2]
-                    m1.addConstr(v[a, k] <= A * n * Wr[i, k])
-                    constr2[a, k] = m1.addConstr(v[a, k] <=   dem*N[i, n])
+                if linkSet[a].type == 'road':
+                    constr5[i, a, k] = m1.addConstr(v[a, k] <= A * sum([n * omega[n, a, i, k] for n in fleetSet]))
+                    for n in fleetSet:
+                        bigM = dem * (1/ (A ))
+                        constr6[n, a, i, k] = m1.addConstr(Wr[i, k] - omega[n, a, i, k] <= bigM*(1 - N[i, n]))
+                        constr7[n, a, i, k] = m1.addConstr(omega[n, a, i, k] <= bigM*N[i, n])
+                        constr8[n, a, i, k] = m1.addConstr(Wr[i, k] >= omega[n, a, i, k])
+                                
                     
     m1.update()
-    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in destSet])
+    ivt = sum([v[l, k] * linkSet[l].time for l in linkSet for k in zoneSet])
     twt = sum([Wt[k] for k in Wt])
     rwt = sum([Wr[k] for k in Wr])
-    obj = ivt + twt + rwt 
+    obj = ivt + rwt + twt
     m1.setObjective(obj, sense=GRB.MINIMIZE)
     m1.update()
-    m1.Params.OutputFlag = verbose
+    m1.Params.OutputFlag = 0
     m1.Params.DualReductions  = 0
     start = time.time()
     m1.optimize()
-    if m1.status == 2:        
-        '''
+    if m1.status == 2:   
+        '''         
         print("Solving model took ", time.time() - start, " sec")
         print(m1.status)
-        
         print(m1.objVal)
         print(ivt.getValue())
         print(twt.getValue())
-        
-        
+        print(rwt.getValue())
         '''
-        expr = 0.0;expr1= 0.0;expr2= 0.0;
-        for k in destSet:          
-            dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
+
+        expr = 0.0;expr1= 0.0;expr2= 0.0;expr3= 0.0;expr4= 0.0
+        for k in zoneSet:
+            
             for i in nodeSet:
                 tmp = sum([v[j, k] for j in nodeSet[i].outLinks]) - sum([v[j, k] for j in nodeSet[i].inLinks])
                 if i == k:
                     dem = sum([tripSet[d].demand for d in tripSet if d[1] == k])
                     expr += consConstr[i, k].pi * (-dem)
                 elif (i, k) in tripSet:
+                    dem = tripSet[i, k].demand
                     expr += consConstr[i, k].pi * tripSet[i, k].demand
                 else:
                     expr += 0
@@ -760,18 +720,24 @@ def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
             for i in stops:
                 for a in nodeSet[i].outLinks:
                     if linkSet[a].type == 'boarding':
-                        l = a[1][1]; f = int(linkSet[a].freq)
-                        expr1 += constr1[a, k].pi*dem*m.getVarByName('_'.join([l, str(f)]))
-            for i in originSet: 
+                        l = a[1][1]                        
+                        for f in freqSet:
+                            bigM = round(dem*60.0/f, 2)
+                            expr1 += constr2[f, a, i, k].pi * bigM*(1-m.getVarByName('_'.join([l, str(f)])))
+                            expr2 += constr3[f, a, i, k].pi * bigM*m.getVarByName('_'.join([l, str(f)]))
+            
+            for i in zoneSet:     
                 for a in nodeSet[i].outLinks:
-                    if linkSet[a].type == 'origin':
-                        n = a[2]
-                        expr2 += constr2[a, k].pi* dem*m.getVarByName('_'.join([str(i), str(n)]))
-                        
-        m.addConstr(sum([m.getVarByName('eta_'+str(k)) for k in destSet]) >= expr  + expr1 + expr2)  
+                    if linkSet[a].type == 'road':
+                        for n in fleetSet:
+                            bigM = dem * (1 / (A ))
+                            expr3 += constr6[n, a, i, k].pi * bigM * (1 - m.getVarByName('_'.join([i, str(n)])))
+                            expr4 += constr7[n, a, i, k].pi * bigM * m.getVarByName('_'.join([i, str(n)]))
+                            
+        m.addConstr(sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= expr  + expr1 + expr2 + expr3 + expr4)   
         '''
         tmp = 0
-        for k in destSet:
+        for k in zoneSet:
             for l in lineSet:
                 for f in freqSet:
                     if y[l, f] > 0.4:
@@ -779,28 +745,31 @@ def BendersSubProblem(x, y, N, m, verbose = 0, types=['classic']):
                     else:
                         tmp +=  m.getVarByName('_'.join([l, str(f)]))                    
             
-            for i in originSet:
+            for i in zoneSet:
                 for n in fleetSet:            
                     if N[i, n] > 0.4:
                        tmp +=  (1 - m.getVarByName('_'.join([str(i), str(n)])))
                     else:
                         tmp +=  m.getVarByName('_'.join([str(i), str(n)]))
-        m.addConstr((m1.objVal-738537) * tmp + sum([m.getVarByName('eta_'+str(k)) for k in destSet]) >= m1.objVal)   
-        
+        for l in lineSet:
+            if x[l] > 0.4:
+                tmp +=  (1-m.getVarByName(str(l)))
+            else:
+                tmp +=  (m.getVarByName(str(l)))
+                
+        m.addConstr((m1.objVal-687555) * tmp + sum([m.getVarByName('eta_'+str(k)) for k in zoneSet]) >= m1.objVal)   
+
+        m.update()
         '''
-        m.update()  
         return m, m1.objVal
 
     else:
         print("Extreme ray encountered!", m1.status)
         m1.computeIIS()
         m1.write("Infeasible_model.ilp")
-        
-        
-        
-            
-    
-def Benders(eps=1000, maxIt=1000, types= ['classic']):
+                
+
+def Benders(eps=1000, maxIt=1000, type= 'classic'):
     '''
     Implements benders decomposition
     eps = tolerance in the UB and LB
@@ -819,14 +788,14 @@ def Benders(eps=1000, maxIt=1000, types= ['classic']):
     x0 = {l: 1 for l in lineSet}
     y0 = {(l, f): 1 for f in freqSet for l in lineSet}
     for k in y0:
-        if k[1] != 6:
+        if k[1] != 12:
             y0[k] = 0
     N0 = {(i, n): 1 for i in zoneSet for n in fleetSet}
     for k in N0:
-        if k[1] != 1:
+        if k[1] != 50:
             N0[k] = 0           
             
-    m = setupMasterProblemModel(types=types)
+    m = setupMasterProblemModel(type=type)
     solutions = [(x0,y0,N0)]
     solutionsEverFound = [(x0,y0,N0)]
     
@@ -834,28 +803,27 @@ def Benders(eps=1000, maxIt=1000, types= ['classic']):
     while tol != 0 and it < maxIt:   
         for s in solutions:
             m, obj  = BendersSubProblem(s[0], s[1], s[2], m)
-
+            
         UB = round(obj) #min(UB, obj)
         m.optimize()
         if m.status == 2:
-            ob = m.objVal; x0 = {l:round(m.getVarByName(str(l)).x) for l in lineSet}; y0 = {(l, f):round(m.getVarByName('_'.join([l, str(f)])).x)  for f in freqSet for l in lineSet}; N0 =  {(i, n):round(m.getVarByName('_'.join([str(i), str(n)])).x)  for i in originSet for n in fleetSet}
+            ob = m.objVal; x0 = {l:m.getVarByName(str(l)).x for l in lineSet}; y0 = {(l, f):m.getVarByName('_'.join([l, str(f)])).x  for f in freqSet for l in lineSet}; N0 =  {(i, n):m.getVarByName('_'.join([i, str(n)])).x  for i in zoneSet for n in fleetSet}
             LB = round(ob)
             solutions = []
-            if (x0, y0, N0) not in solutionsEverFound:
+            if (x0, y0, N0) not in solutionsEverFound :
                 solutionsEverFound.append((x0, y0, N0))
                 solutions.append((x0, y0, N0))
                 
-            if 'multiple' in types:                
+            if type == 'multiple':                
                 nSolutions = m.SolCount            
                 if (nSolutions >= 2):
                     for solNum in range(nSolutions - 1):                    
                         m.setParam(GRB.Param.SolutionNumber, solNum+1)
-                        ob = m.PoolObjBound; x0 = {l:m.getVarByName(str(l)).Xn for l in lineSet}; y0 = {(l, f):round(m.getVarByName('_'.join([l, str(f)])).Xn)  for f in freqSet for l in lineSet}; N0 =  {(i, n):round(m.getVarByName('_'.join([str(i), str(n)])).Xn)  for i in originSet for n in fleetSet}
-                        LB = round(ob)
+                        ob = m.objVal; x0 = {l:m.getVarByName(str(l)).x for l in lineSet}; y0 = {(l, f):m.getVarByName('_'.join([l, str(f)])).x  for f in freqSet for l in lineSet}; N0 =  {(i, n):m.getVarByName('_'.join([i, str(n)])).x  for i in zoneSet for n in fleetSet}
+                        LB = max(LB, round(ob))
                         if (x0, y0, N0) not in solutionsEverFound:
                             solutionsEverFound.append((x0, y0, N0))
                             solutions.append((x0, y0, N0))
-                print('Adding ' + str(len(solutions)) + ' cuts')
         else:
             print('master problem cannot be solved... \n Terminating ....')
             break
@@ -864,24 +832,27 @@ def Benders(eps=1000, maxIt=1000, types= ['classic']):
         it += 1
         print((it, LB, UB, tol,  [k for k in x0 if round(x0[k]) == 0]))
     return (x0, y0, N0)
-        
-        
-           
+
+
+            
+            
+            
+
     
 ################################################################################################
-loc = 'Z:/Projects/NSF_SCC/Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/Siuox Falls network/'
+loc = 'S:/Projects/NSF_SCC/Transit network design for FMLM in case of AVs/Transit FMLM AV/Scripts/InputFiles/Siuox Falls network/'
 start = time.time()
 alpha = [4, 2] # Fuel, transfer penalty
 baseTaxiFare = 0.8 # in dollars
 fuelCost = 0.21 # in dollars
 transitFare = 2 # in dollars applies to only access and mode transfer links
 VOT = 23 # in dollars per minute
-freqSet =[2, 3, 4, 6, 12]  #[6, 12] # [2, 3, 4, 6, 12] #  #Buses per hour
+freqSet =[12, 6]# [2, 3, 4, 6, 12] #  Buses per hour
 #freqSet = [1/60, 1/30, 1/6, 1/4, 1/2]
 #freqSet = [float(f) for f in freqSet]
-fleetSet =[1, 50, 100, 200, 500] #  [1, 50] #  
+fleetSet = [1, 50] # [1, 50, 100, 200, 500] # 
 tBigM = 200
-BigM = 10000
+BigM = 100000
 rWaitFac = 1000
 A =  6.06/3600 #48.31 # 6.06 for actual alpha
 
@@ -904,7 +875,6 @@ waitingLineFinder = {}
 
 
 readNodes()
-
 readLinks()
 readLines()
 readtrips()
@@ -912,17 +882,19 @@ readTransitLinks()
 readTransferLinks()
 linkSetLines()
 createBoardAlightLinks()
-
 readDemand()
 print(len(nodeSet), "nodes in the network")
 print(len(linkSet), "links in the network")
 print("Reading network took ", round(time.time() - start), " seconds")
 stops = list({k for k in nodeSet if nodeSet[k].type == 'stop'})
-destSet = [k for k in nodeSet if nodeSet[k].type == 'dest']
-originSet = [k for k in nodeSet if nodeSet[k].type == 'origin']
+
 #############################################################################################
 # Testing
 start = time.time()
 #solveGurobiModel()
-Benders(types = ['disagg'])
+Benders()
 print('It took ', time.time() - start)
+
+
+
+
